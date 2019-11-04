@@ -1,4 +1,4 @@
-CONSTANT IO_Port,  00
+	CONSTANT IO_Port,  00
     CONSTANT LED0,     01
     CONSTANT LED1,     02
     CONSTANT BNT0,     04
@@ -24,7 +24,9 @@ CONSTANT IO_Port,  00
 	NAMEREG s8, VALID_OUTPUT ; 1 wenn es was zum senden gibt
 	NAMEREG s9, SENDDATA ; Daten zum senden
 	NAMEREG sA, TMP_DATA ; bit size
-
+	NAMEREG sB, HIGH ;HIGH
+	NAMEREG sC, LOW ;LOW
+	NAMEREG sD, SENDCNT
 
 
 ; alle acht Register s8 bis sF stehen der Main-Funktion zur Verfuegung
@@ -38,12 +40,15 @@ CONSTANT IO_Port,  00
 ; Hauptfunktion
 
 start:  
-	AND CNTH, 00   ; Initialisierung der Zaehlers ...
-    AND    CNTL, 00   ; in der ISR
-	AND    STATE, 00  ; Setze STATE 0
-	OR    SMPCNT, 08
-	OR    DATABIT, 07
-	AND VALID_OUTPUT, 00
+	AND 	CNTH, 00   ; Initialisierung der Zaehlers ...
+    AND    	CNTL, 00   ; in der ISR
+	AND    	STATE, 00  ; Setze STATE 0
+	LOAD    SMPCNT, 08
+	LOAD    DATABIT, 08
+	LOAD 	VALID_OUTPUT, 00
+	LOAD	HIGH, 01
+	LOAD	LOW, 00
+	LOAD    SENDCNT, 0F
 
 	ENABLE INTERRUPT
 
@@ -82,7 +87,7 @@ BLINK:
     INPUT  IOR,  IO_Port ; IO-Port einlesen
     XOR    IOR,  LED1    ; LED1 toggeln
 	OUTPUT IOR,  IO_Port ; den neuen Wert ueber IO-Port ausgeben 
-	BINK0: RETURN
+	RETURN
 ; --------------------------------------------------------------------------------------------
 ; Subroutine, die Daten ueber das serielle Eingangssignal RXD abtastet,
 ; zu einem Byte zusammensetzt, entschidet, ob das empfangene Byte
@@ -119,12 +124,12 @@ START:
 RECV:
 	SUB     SMPCNT, 01
   	JUMP    NZ, COMMRET   ; warte auf den Mittelpunkt des Startbits
-	OR      SMPCNT, 0F
+	LOAD    SMPCNT, 0F
 	SL0     ASCII
     OR      ASCII, IOR    ; TODO: ist IOR 0000000x?
     SUB     DATABIT, 01
     JUMP    NZ, COMMRET
-	OR      SMPCNT, 08
+	LOAD    SMPCNT, 0F
  	LOAD    STATE, 03
 	JUMP    COMMRET
 
@@ -133,14 +138,29 @@ END:
   	JUMP    NZ, COMMRET   ; warte auf den Mittelpunkt des Startbits
     COMPARE IOR, 01
 	LOAD    SENDDATA, ASCII
-	JUMP    Z, SEND
+	JUMP    Z, SEND_START
 	JUMP COMMRET
 
 
+SEND_START:
+	SUB		SENDCNT, 01
+	OUTPUT  LOW, COM_PORT ; TXD ausgeben
+	JUMP	NZ, COMMRET
+	LOAD 	SENDCNT, 0F
+	JUMP 	SEND
+
 SEND:
+	COMPARE VALID_OUTPUT, 00
+	JUMP    Z, SEND_HIGH
+	SUB		SENDCNT, 01
 	LOAD    TMP_DATA, SENDDATA
-	AND     TMP_DATA, 01
 	OUTPUT  TMP_DATA, COM_PORT ; TXD ausgeben
+	SR0     TMP_DATA
+	JUMP COMMRET	
+
+
+SEND_HIGH:
+	OUTPUT  HIGH, COM_PORT 
 
 COMMRET:
         RETURN
