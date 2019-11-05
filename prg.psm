@@ -27,6 +27,8 @@
 	NAMEREG sB, HIGH ;HIGH
 	NAMEREG sC, LOW ;LOW
 	NAMEREG sD, SENDCNT
+	NAMEREG sE, STATE_TX
+	NAMEREG sF, SENDBIT
 
 
 ; alle acht Register s8 bis sF stehen der Main-Funktion zur Verfuegung
@@ -45,6 +47,8 @@ start:
 	AND    	STATE, 00  ; Setze STATE 0
 	LOAD    SMPCNT, 08
 	LOAD    DATABIT, 08
+	LOAD	SENDBIT, 08
+	LOAD	STATE_TX, 00
 	LOAD 	VALID_OUTPUT, 00
 	LOAD	HIGH, 01
 	LOAD	LOW, 00
@@ -96,28 +100,28 @@ BLINK:
 ;
 ; in dieser Version ist eine einfache Echo-Funktion implementiert
 
-COMM:   
-    INPUT  IOR,  COM_Port ; COM-Port einlesen
+COMM_RX:
+    INPUT  IOR,  IO_Port ; COM-Port einlesen
     COMPARE STATE, 00     ;
-    JUMP    Z,  IDLE           ; Go to State 0
+    JUMP    Z,  RECV_IDLE           ; Go to State 0
     COMPARE STATE, 01
-    JUMP    Z, START            ; Got to State 1
+    JUMP    Z, RECV_START            ; Got to State 1
     COMPARE STATE, 02
     JUMP    Z, RECV            ; Got to State 2
     COMPARE STATE, 03
-    JUMP    Z, END             ; Go to State 3
+    JUMP    Z, RECV_END             ; Go to State 3
     JUMP COMMRET          ; Do nothing, shouldnt reach this code
 	
-IDLE:
+RECV_IDLE:
 	COMPARE IOR, 00
 	JUMP    NZ, COMMRET
 	LOAD    STATE, 01
 	JUMP    COMMRET
 
-START:   
+RECV_START:   
 	SUB     SMPCNT, 01
   	JUMP    NZ, COMMRET   ; warte auf den Mittelpunkt des Startbits
-    OR      SMPCNT, 0F    ; alle 16 interrupts signal lesen
+    LOAD    SMPCNT, 0F    ; alle 16 interrupts signal lesen
     LOAD    STATE, 02     ; stetze State auf RECV
  	JUMP    COMMRET
 
@@ -133,37 +137,56 @@ RECV:
  	LOAD    STATE, 03
 	JUMP    COMMRET
 
-END:
+RECV_END:
 	SUB     SMPCNT, 01
   	JUMP    NZ, COMMRET   ; warte auf den Mittelpunkt des Startbits
     COMPARE IOR, 01
 	LOAD    SENDDATA, ASCII
-	JUMP    Z, SEND_START
+	LOAD	STATE, 00
+	LOAD    VALID_OUTPUT, 01
 	JUMP COMMRET
 
+	
+	
+	
+	
+	
+COMM_TX:
+    COMPARE STATE_TX, 00     ;
+    JUMP    Z,  SEND_START           ; Go to State 0
+    COMPARE STATE_TX, 01
+    JUMP    Z, SEND            ; Got to State 1
+    JUMP COMMRET          ; Do nothing, shouldnt reach this code	
+	
+	
 
 SEND_START:
+	COMPARE VALID_OUTPUT, 00
+	JUMP    Z, SEND_HIGH
 	SUB		SENDCNT, 01
 	OUTPUT  LOW, COM_PORT ; TXD ausgeben
 	JUMP	NZ, COMMRET
 	LOAD 	SENDCNT, 0F
+	LOAD    STATE_TX, 01
 	JUMP 	SEND
 
 SEND:
-	COMPARE VALID_OUTPUT, 00
-	JUMP    Z, SEND_HIGH
 	SUB		SENDCNT, 01
+	JUMP	NZ, COMMRET
 	LOAD    TMP_DATA, SENDDATA
 	OUTPUT  TMP_DATA, COM_PORT ; TXD ausgeben
 	SR0     TMP_DATA
+	SUB     SENDBIT, 01
+	JUMP    NZ, COMMRET
+	LOAD    STATE_TX, 00
+	LOAD	VALID_OUTPUT, 00
 	JUMP COMMRET	
 
 
 SEND_HIGH:
-	OUTPUT  HIGH, COM_PORT 
+	OUTPUT  HIGH, COM_PORT
+	JUMP    COMMRET
 
-COMMRET:
-        RETURN
 
 ; --------------------------------------------------------------------------------------------
 
@@ -174,7 +197,8 @@ COMMRET:
 ; Interrupt-Service-Routine
 
 ISR:
-	CALL    COMM    
+	CALL    COMM_TX
+	CALL 	COMM_RX
 	CALL    BNT0LED0
     CALL    BLINK
     RETURNI ENABLE
