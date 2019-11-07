@@ -1,0 +1,220 @@
+	
+	CONSTANT IO_Port,  00
+    CONSTANT LED0,     01
+    CONSTANT LED1,     02
+    CONSTANT BNT0,     04
+    CONSTANT COM_Port, 01
+    CONSTANT TXD,      01
+    CONSTANT RXD,      01
+
+
+
+; Register Mapping
+
+; alle acht Register s0 bis s7 stehen der ISR zur Verfuegung
+
+    NAMEREG s0, IOR
+    NAMEREG s1, TMP
+    NAMEREG s2, CNTH
+    NAMEREG s3, CNTL
+	NAMEREG s4, STATE ; STATE = 0 warte auf startbit, 1-8 nehme datenbit an, 9 endbit, 10 werte ascii zeichen aus, 11 sende ascii zeichen
+	NAMEREG s5, SMPCNT ; count 8/16 times
+	NAMEREG s6, DATABIT; which of the 8 bits gets received
+	NAMEREG s7, ASCII  ; Datenwort
+	NAMEREG s8, VALID_OUTPUT ; 1 wenn es was zum senden gibt
+	NAMEREG s9, SENDDATA ; Daten zum senden
+	NAMEREG sA, TMP_DATA ; bit size
+	NAMEREG sB, HIGH ;HIGH
+	NAMEREG sC, LOW ;LOW
+	NAMEREG sD, SENDCNT
+	NAMEREG sE, STATE_TX
+	NAMEREG sF, SENDBIT
+
+
+; alle acht Register s8 bis sF stehen der Main-Funktion zur Verfuegung
+
+
+
+; --------------------------------------------------------------------------------------------
+
+	ADDRESS 000
+
+; Hauptfunktion
+
+start:  
+	AND 	CNTH, 00   ; Initialisierung der Zaehlers ...
+    AND    	CNTL, 00   ; in der ISR
+	AND    	STATE, 00  ; Setze STATE 0
+	LOAD    SMPCNT, 08
+	LOAD    DATABIT, 08
+	LOAD	SENDBIT, 08
+	LOAD	STATE_TX, 00
+	LOAD 	VALID_OUTPUT, 00
+	LOAD	HIGH, 01
+	LOAD	LOW, 00
+	LOAD    SENDCNT, 10
+	OUTPUT	HIGH, 01
+	ENABLE INTERRUPT
+
+loop:   
+	; do nothing
+	JUMP loop
+
+; --------------------------------------------------------------------------------------------
+
+ 
+
+; Subroutine, die den Zustand des Buttons BTN0 auf die Leuchtdiode LED0 durchschaltet
+
+BNT0LED0:
+        INPUT  IOR,  IO_Port ; IO-Port einlesen
+        INPUT  TMP,  IO_Port ; IO-Port einlesen
+        AND    TMP,  BNT0    ; Zustand von BNT0 ermitteln
+        SR0    TMP           ; auf die Position ...
+        SR0    TMP           ; ... von LED0 verschieben
+        AND    IOR,  LED1    ; Zustand von LED1 ermitteln
+        OR     IOR,  TMP     ; LED1 mit BNT0 konkatinieren
+        OUTPUT IOR,  IO_Port ; den neuen Wert ueber IO-Port ausgeben 
+        RETURN
+
+; --------------------------------------------------------------------------------------------
+
+; Subroutine, die die Leuchtdione LED1 mit ca. 1 Hz blinken laesst
+BLINK:  ADD    CNTL, 01      ; den 16-Bit-Zaehler ... 
+        ADDCY  CNTH, 00      ; .. inkrementieren
+        JUMP   NC,   BLINK0  ; kein Ueberlauf -> exit, sonst
+        INPUT  IOR,  IO_Port ; IO-Port einlesen
+        XOR    IOR,  LED1    ; LED1 toggeln
+        OUTPUT IOR,  IO_Port ; den neuen Wert ueber IO-Port ausgeben 
+BLINK0: RETURN
+; --------------------------------------------------------------------------------------------
+; Subroutine, die Daten ueber das serielle Eingangssignal RXD abtastet,
+; zu einem Byte zusammensetzt, entschidet, ob das empfangene Byte
+; ein Buchstabe oder eine Ziffer ist, und ggf. das Byte seriell
+; ueber das serielle Ausgangssignal TXD ausgibt
+;
+; in dieser Version ist eine einfache Echo-Funktion implementiert
+
+	
+COMM_TX:
+    COMPARE STATE_TX, 01
+    JUMP    Z, SEND            ; Got to State 1
+	COMPARE STATE_TX, 02     ;
+    JUMP    Z,  SEND_START           ; Go to State 0
+    COMPARE STATE_TX, 00     ;
+    JUMP    Z,  SEND_IDLE           ; Go to State 0
+    RETURN  ;JUMP COMMRET          ; Do nothing, shouldnt reach this code	
+	
+	
+
+SEND_IDLE:
+	COMPARE VALID_OUTPUT, 00
+	JUMP 	Z, COMM_RX  ;JUMP    Z, COMMRET
+	LOAD    STATE_TX, 02
+	OUTPUT  LOW, 01; COM_PORT  TXD ausgeben
+	JUMP 	COMM_RX   ;JUMP 	COMM_RX
+
+SEND_START:
+	SUB		SENDCNT, 01
+	JUMP 	NZ, COMM_RX ;  JUMP	NZ, COMMRET
+	LOAD 	SENDCNT, 10
+	LOAD    STATE_TX, 01
+	OUTPUT  SENDDATA, 01 ; TXD ausgeben
+	JUMP 	COMM_RX   ;JUMP 	COMMRET
+
+SEND:
+	SUB		SENDCNT, 01
+	JUMP 	NZ, COMM_RX ;JUMP	NZ, COMMRET
+	SR0     SENDDATA
+	OUTPUT  SENDDATA, 01 ; TXD ausgeben
+	LOAD    SENDCNT, 10
+	SUB     SENDBIT, 01
+	JUMP 	NZ, COMM_RX;JUMP    NZ, COMMRET
+	LOAD    SENDBIT, 08
+	LOAD    STATE_TX, 00
+	LOAD	VALID_OUTPUT, 00
+	;JUMP 	COMMRET oder send high	
+
+
+SEND_HIGH:
+	OUTPUT  HIGH, 01
+	;RETURN ;JUMP    COMMRET
+
+
+COMM_RX:
+    COMPARE STATE, 02
+    JUMP    Z, RECV            ; Got to State 2
+	COMPARE STATE, 01
+    JUMP    Z, RECV_START            ; Got to State 1
+    COMPARE STATE, 03
+    JUMP    Z, RECV_END             ; Go to State 3
+    COMPARE STATE, 00     ;
+    JUMP    Z,  RECV_IDLE           ; Go to State 0
+    RETURN ;JUMP 	COMMRET          ; Do nothing, shouldnt reach this code
+	
+RECV_IDLE:
+	INPUT   IOR,  01
+	COMPARE IOR, 00
+	RETURN NZ  ;JUMP    NZ, COMMRET
+	LOAD    STATE, 01
+	RETURN  ;JUMP    COMMRET
+
+RECV_START:   
+	SUB     SMPCNT, 01
+  	RETURN NZ ;JUMP    NZ, COMMRET   ; warte auf den Mittelpunkt des Startbits
+    LOAD    SMPCNT, 10    ; alle 16 interrupts signal lesen
+    LOAD    STATE, 02     ; stetze State auf RECV
+ 	RETURN  ;JUMP    COMMRET
+
+RECV:
+	SUB     SMPCNT, 01
+  	RETURN NZ ;JUMP    NZ, COMMRET   ; warte auf den Mittelpunkt des Startbits
+	LOAD    SMPCNT, 10
+	INPUT  	IOR,  01
+    OR      ASCII, IOR
+	RR     	ASCII		;SL0
+    SUB     DATABIT, 01
+    RETURN NZ ;JUMP    NZ, COMMRET
+	LOAD    DATABIT, 08
+	LOAD    SMPCNT, 10
+ 	LOAD    STATE, 03
+	RETURN ;JUMP    COMMRET
+
+RECV_END:
+	SUB     SMPCNT, 01
+  	RETURN  NZ;JUMP    NZ, COMMRET   ; warte auf den Mittelpunkt des Startbits
+	LOAD    SMPCNT, 08
+    ;COMPARE IOR, 01   compare ob IOR 1 ist
+	LOAD    SENDDATA, ASCII
+  	LOAD    ASCII, 00
+	LOAD	STATE, 00
+	LOAD    VALID_OUTPUT, 01
+	RETURN ;JUMP COMMRET
+
+
+
+COMMRET:
+	RETURN
+	RETURN NZ
+
+; --------------------------------------------------------------------------------------------
+
+        
+
+    ADDRESS 300
+
+; Interrupt-Service-Routine
+
+ISR:
+	CALL    COMM_TX
+	;CALL 	COMM_RX
+	CALL    BNT0LED0
+    CALL    BLINK
+    RETURNI ENABLE
+
+
+; --------------------------------------------------------------------------------------------
+; Interrupt-Vektor
+
+    ADDRESS 3FF
+    JUMP ISR
